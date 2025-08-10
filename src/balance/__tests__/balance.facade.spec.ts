@@ -1,10 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { BalanceFacade } from '../balance.facade';
 import { BalanceService } from '../balance.service';
 import { BalanceRechargeRequest } from '../dto/request/balance-recharge-request';
 import { BalanceResponse } from '../dto/response/balance-response';
 import { BalanceEntity } from '../domain/balance.entity';
+import { OptimisticLockException } from '../../common/exception/optimistic-lock.exception';
 
 describe('BalanceFacade', () => {
   let facade: BalanceFacade;
@@ -14,6 +15,7 @@ describe('BalanceFacade', () => {
     id: 1,
     userId: 1,
     amount: 150000,
+    version: 1,
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
     user: null,
@@ -31,6 +33,8 @@ describe('BalanceFacade', () => {
     const mockService = {
       getBalance: jest.fn(),
       rechargeBalance: jest.fn(),
+      useBalance: jest.fn(),
+      initializeBalance: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -100,5 +104,55 @@ describe('BalanceFacade', () => {
       expect(balanceService.rechargeBalance).toHaveBeenCalledWith(userId, rechargeRequest);
       expect(balanceService.rechargeBalance).toHaveBeenCalledTimes(1);
     });
+
+    it('OptimisticLockException을 Service에서 전달받으면 그대로 전파합니다.', async () => {
+      const userId = 1;
+      const optimisticLockError = new OptimisticLockException();
+      balanceService.rechargeBalance.mockRejectedValue(optimisticLockError);
+
+      await expect(facade.rechargeBalance(userId, rechargeRequest)).rejects.toThrow(OptimisticLockException);
+      expect(balanceService.rechargeBalance).toHaveBeenCalledWith(userId, rechargeRequest);
+    });
+
+    it('유효하지 않은 충전 요청에 대해 Service 에러를 전파합니다.', async () => {
+      const userId = 1;
+      const invalidRequest = { amount: 50 }; // 100원 미만
+      const validationError = new BadRequestException('충전 금액은 최소 100원 이상이어야 합니다.');
+
+      balanceService.rechargeBalance.mockRejectedValue(validationError);
+
+      await expect(facade.rechargeBalance(userId, invalidRequest)).rejects.toThrow(BadRequestException);
+      expect(balanceService.rechargeBalance).toHaveBeenCalledWith(userId, invalidRequest);
+    });
   });
+
+  describe('DTO 변환 로직', () => {
+    it('BalanceEntity에서 BalanceResponse로 올바르게 변환됩니다.', async () => {
+      const userId = 1;
+      balanceService.getBalance.mockResolvedValue(mockBalanceEntity);
+
+      // BalanceResponse.of 정적 메서드의 실제 동작을 검증
+      const result = await facade.getBalance(userId);
+
+      expect(result).toHaveProperty('id', mockBalanceEntity.id);
+      expect(result).toHaveProperty('userId', mockBalanceEntity.userId);
+      expect(result).toHaveProperty('amount', mockBalanceEntity.amount);
+      expect(result).toHaveProperty('createdAt');
+      expect(result).toHaveProperty('updatedAt');
+    });
+
+    it('충전 요청이 정상적으로 Service로 전달됩니다.', async () => {
+      const userId = 1;
+      const chargeRequest = { amount: 50000 };
+
+      balanceService.rechargeBalance.mockResolvedValue(undefined);
+
+      await facade.rechargeBalance(userId, chargeRequest);
+
+      expect(balanceService.rechargeBalance).toHaveBeenCalledWith(userId, chargeRequest);
+      expect(balanceService.rechargeBalance).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // 예외 처리 전파 테스트는 핵심 시나리오에서 제외하여 단순화
 });
