@@ -7,6 +7,8 @@ import { GetUserCouponsRequest } from './dto/request/get-user-coupons-request';
 import { GetUserCouponsResponse, UserCouponDetailResponse } from './dto/response/get-user-coupons-response';
 import { CouponStatus, UserCouponStatus } from './enum/coupon-status.enum';
 import { CouponEntity } from './domain/coupon.entity';
+import { Retry } from '../common/decorator/retry.decorator';
+import { QueryFailedError } from 'typeorm';
 
 @Injectable()
 export class CouponService {
@@ -17,6 +19,16 @@ export class CouponService {
     private readonly userCouponRepository: IUserCouponRepository,
   ) {}
 
+  @Retry({
+    maxAttempts: 3,
+    baseDelay: 100,
+    retryIf: (error: any) => {
+      return error instanceof QueryFailedError && 
+             (error.message?.includes('lock') || 
+              error.message?.includes('timeout') ||
+              error.message?.includes('deadlock'));
+    },
+  })
   async issueCoupon(couponId: number, userId: number): Promise<UserCouponDetailResponse> {
     await this.validateDuplicateIssue(userId, couponId);
 

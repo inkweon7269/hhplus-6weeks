@@ -15,16 +15,31 @@ export class ProductOptionService {
   }
 
   async deductMultipleStock(items: { productOptionId: number; quantity: number }[]): Promise<void> {
-    const productOptions = await this.validateAndGetProductOptions(items);
-    this.checkStockAvailability(items, productOptions);
-
-    for (const item of items) {
-      const productOption = productOptions.find((option) => option.id === item.productOptionId);
-      const newStock = productOption.stock - item.quantity;
-      productOption.stock = newStock;
+    if (items.length === 0) {
+      return;
     }
 
-    await this.productOptionRepository.saveMultipleStock(productOptions);
+    // ID 순으로 정렬하여 데드락 방지
+    const sortedItems = [...items].sort((a, b) => a.productOptionId - b.productOptionId);
+    
+    // 비관적 락으로 재고 차감 (Repository에서 검증 없이 바로 차감)
+    for (const item of sortedItems) {
+      // 사전 검증: 락 없이 빠른 실패를 위한 재고 체크
+      const productOption = await this.productOptionRepository.findById(item.productOptionId);
+      
+      if (!productOption) {
+        throw new BadRequestException(`상품 옵션 ID ${item.productOptionId}를 찾을 수 없습니다.`);
+      }
+
+      if (productOption.stock < item.quantity) {
+        throw new BadRequestException(
+          `상품 옵션 '${productOption.name}'의 재고가 부족합니다. (요청: ${item.quantity}, 재고: ${productOption.stock})`
+        );
+      }
+
+      // 비관적 락으로 원자적 재고 차감
+      await this.productOptionRepository.deductStockWithPessimisticLock(item.productOptionId, item.quantity);
+    }
   }
 
   /**

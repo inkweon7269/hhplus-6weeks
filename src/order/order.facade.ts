@@ -70,6 +70,7 @@ export class OrderFacade {
   }
 
   // 짧은 트랜잭션 경계 — 실제 변경(재고 차감 → 쿠폰 사용 → 잔액 차감 → 주문 저장)만 포함
+  // 데드락 방지를 위한 락 순서: 재고(비관적) → 쿠폰(비관적) → 잔액(낙관적) → 주문 생성
   @Transactional()
   private async confirmAndCreateOrder(
     userId: number,
@@ -90,10 +91,10 @@ export class OrderFacade {
   ): Promise<CreateOrderResponse> {
     const { orderProductOptions, amounts, productInfos, couponInfo } = args;
 
-    // 1) 재고 차감 (현재 구현 유지: 조회 후 저장 방식)
+    // 1) 재고 차감 (비관적 락, ID 순 정렬로 데드락 방지)
     await this.productOptionService.deductMultipleStock(orderProductOptions);
 
-    // 2) 쿠폰 사용 (현재 구현 유지)
+    // 2) 쿠폰 사용 (비관적 락 + 재시도)
     if (couponInfo && request.couponCode) {
       await this.couponService.useCoupon(userId, request.couponCode);
     }
