@@ -20,49 +20,44 @@ export class OrderFacade {
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
-  // 주문 생성 및 결제 처리에 트랜잭션 적용
-  // 잔액 차감, 재고 차감, 쿠폰 사용, 주문 생성이 모두 성공하거나 모두 롤백됨
-  // typeorm-transactional 데코레이터 주석 처리
-  @Transactional()
+  // 트랜잭션 밖에서 무거운 조회/검증/계산을 모두 처리하고, 실제 데이터 변경(재고 차감, 쿠폰 사용, 잔액 차감, 주문 저장)만 짧은 트랜잭션으로 처리
   async pay(userId: number, request: CreateOrderRequest): Promise<CreateOrderResponse> {
-    // 1. 주문 검증 및 상품 정보 조회
+    // 1) 주문 검증 및 상품 정보 조회 (읽기 전용)
     const { productInfos, orderProductOptions } = await this.getValidatedProductInfos(request);
 
-    // 2. 주문 금액 계산 (쿠폰 할인 포함)
+    // 2) 주문 금액 계산 (쿠폰 할인 포함, 읽기 전용)
     const amounts = await this.calculateOrderAmount(userId, request, productInfos);
 
-    // 3. 사용 금액 검증
+    // 3) 사용 금액 검증 (읽기 전용)
     if (request.usedAmount !== amounts.finalAmount) {
       throw new BadRequestException(
         `사용 금액이 주문 금액과 일치하지 않습니다. 실제 주문 금액: ${amounts.finalAmount.toLocaleString()}원, 요청 사용 금액: ${request.usedAmount.toLocaleString()}원`,
       );
     }
 
-    // 4. 결제 처리 - 잔액 차감
-    await this.balanceService.useBalance(userId, request.usedAmount);
-
-    // 5. 재고 차감 (잔액 차감 성공 후)
-    await this.productOptionService.deductMultipleStock(orderProductOptions);
-
-    // 6. 쿠폰 사용 처리 (결제 성공 후)
+    // 4) 쿠폰 사전 조회 (읽기 전용) - 실제 사용은 트랜잭션 내에서 처리
     let couponInfo: { couponId: number; userCouponId: number; discountAmount: number } | null = null;
     if (request.couponCode) {
-      // 쿠폰 사용 전에 쿠폰 정보를 얻기 위해 조회
       const userCoupon = await this.couponService.findAvailableUserCouponByCode(userId, request.couponCode);
-      if (userCoupon) {
-        couponInfo = {
-          couponId: userCoupon.couponId,
-          userCouponId: userCoupon.id,
-          discountAmount: amounts.discountAmount,
-        };
+      if (!userCoupon) {
+        throw new BadRequestException('사용할 수 없는 쿠폰입니다. 쿠폰이 존재하지 않거나 이미 사용되었습니다.');
       }
-      await this.couponService.useCoupon(userId, request.couponCode);
+      couponInfo = {
+        couponId: userCoupon.couponId,
+        userCouponId: userCoupon.id,
+        discountAmount: amounts.discountAmount,
+      };
     }
 
-    // 7. 주문 생성 (검증된 상품 정보 전달)
-    const order = await this.orderService.createOrder(userId, request, amounts, productInfos, couponInfo);
+    // 5) 실제 변경 작업만 트랜잭션으로 짧게 묶어서 처리
+    const order = await this.confirmAndCreateOrder(userId, request, {
+      orderProductOptions,
+      amounts,
+      productInfos,
+      couponInfo,
+    });
 
-    // 8. 주문 생성 이벤트 발생 (비동기)
+    // 6) 커밋 이후 주문 생성 이벤트 발생 (비동기)
     this.eventEmitter.emit('order.created', {
       orderId: order.orderId,
       orderProducts: request.products.map((product) => ({
@@ -72,6 +67,42 @@ export class OrderFacade {
     });
 
     return order;
+  }
+
+  // 짧은 트랜잭션 경계 — 실제 변경(재고 차감 → 쿠폰 사용 → 잔액 차감 → 주문 저장)만 포함
+  @Transactional()
+  private async confirmAndCreateOrder(
+    userId: number,
+    request: CreateOrderRequest,
+    args: {
+      orderProductOptions: Array<{ productOptionId: number; quantity: number }>;
+      amounts: { totalAmount: number; discountAmount: number; finalAmount: number };
+      productInfos: Array<{
+        id: number;
+        name: string;
+        price: number;
+        stock: number;
+        optionId: number;
+        optionName: string;
+      }>;
+      couponInfo: { couponId: number; userCouponId: number; discountAmount: number } | null;
+    },
+  ): Promise<CreateOrderResponse> {
+    const { orderProductOptions, amounts, productInfos, couponInfo } = args;
+
+    // 1) 재고 차감 (현재 구현 유지: 조회 후 저장 방식)
+    await this.productOptionService.deductMultipleStock(orderProductOptions);
+
+    // 2) 쿠폰 사용 (현재 구현 유지)
+    if (couponInfo && request.couponCode) {
+      await this.couponService.useCoupon(userId, request.couponCode);
+    }
+
+    // 3) 잔액 차감 (낙관적 락 + 재시도)
+    await this.balanceService.useBalance(userId, request.usedAmount);
+
+    // 4) 주문 생성 (검증된 상품 정보 전달)
+    return await this.orderService.createOrder(userId, request, amounts, productInfos, couponInfo);
   }
 
   private async getValidatedProductInfos(request: CreateOrderRequest): Promise<{
