@@ -239,6 +239,42 @@ describe('Coupon Integration Test (IT)', () => {
       const couponFromDb = await couponRepository.findCouponById(testCoupon.id);
       expect(couponFromDb!.remainingStock).toBe(testCoupon.remainingStock - 1);
     });
+
+    it('동시에 여러 사용자가 발급 요청 시 과발급 없이 재고만큼만 성공한다', async () => {
+      // 재고 5인 쿠폰 생성
+      const concurrentStock = 5;
+      const concurrentCoupon = await couponRepository.saveCoupon({
+        couponCode: 'PARAISSUE',
+        name: '동시 발급 테스트 쿠폰',
+        discountAmount: 1000,
+        remainingStock: concurrentStock,
+        expiryDate: new Date('2099-12-31'),
+        status: CouponStatus.AVAILABLE,
+      });
+
+      // 20명의 사용자 생성
+      const users = await Promise.all(
+        Array.from({ length: 20 }, (_, i) => userRepository.save({ name: `U-${i + 1}` })),
+      );
+
+      // 동시에 발급 요청 수행
+      const results = await Promise.allSettled(
+        users.map((u) =>
+          request(app.getHttpServer()).post(`/coupons/${concurrentCoupon.id}/issue`).set('id', u.id.toString()),
+        ),
+      );
+
+      // 201 응답만 성공으로 집계
+      const successCount = results.filter(
+        (r) => r.status === 'fulfilled' && (r as PromiseFulfilledResult<request.Response>).value.status === 201,
+      ).length;
+
+      expect(successCount).toBe(concurrentStock);
+
+      // 최종 재고 0 확인
+      const updated = await couponRepository.findCouponById(concurrentCoupon.id);
+      expect(updated!.remainingStock).toBe(0);
+    }, 15000);
   });
 
   describe('GET /coupons/users/me', () => {
