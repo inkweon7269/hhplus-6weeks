@@ -20,18 +20,20 @@ export class CouponService {
   async issueCoupon(couponId: number, userId: number): Promise<UserCouponDetailResponse> {
     await this.validateDuplicateIssue(userId, couponId);
 
-    const coupon = await this.validateCouponForIssue(couponId);
+    // 사전 검증: 락 없이 빠른 실패를 위한 발급 가능성 체크 (최종 보장은 Repository에서 락 후 재검증)
+    await this.validateCouponForIssue(couponId);
 
-    await this.couponRepository.updateCouponStock(couponId, coupon.remainingStock - 1);
+    // Repository 레벨에서 비관적 락을 이용해 재고 차감과 검증을 처리
+    const updatedCoupon = await this.couponRepository.decrementStockWithPessimisticLock(couponId);
 
     const userCoupon = await this.userCouponRepository.saveUserCoupon({
       userId,
-      couponId: coupon.id,
+      couponId: updatedCoupon.id,
       status: UserCouponStatus.AVAILABLE,
       usedDate: null,
     });
 
-    userCoupon.coupon = coupon;
+    userCoupon.coupon = updatedCoupon;
 
     return UserCouponDetailResponse.of(userCoupon);
   }
