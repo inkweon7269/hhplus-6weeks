@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: hhplus-postgres
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: pw
+      POSTGRES_DB: dbname
+      POSTGRES_USER: postgres
+      TZ: Asia/Seoul
+    ports:
+      - '5432:5432'
+    volumes:
+      - ./db/postgres/data:/var/lib/postgresql/data
+
