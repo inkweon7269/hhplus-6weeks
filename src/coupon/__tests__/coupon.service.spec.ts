@@ -45,6 +45,8 @@ describe('CouponService', () => {
       findCouponById: jest.fn(),
       saveCoupon: jest.fn(),
       updateCouponStock: jest.fn(),
+      // 비관적 락 기반 재고 차감 메서드 추가
+      decrementStockWithPessimisticLock: jest.fn(),
     };
 
     const mockUserCouponRepository = {
@@ -134,14 +136,17 @@ describe('CouponService', () => {
     it('정상적인 경우 쿠폰을 발급하고 UserCouponDetailResponse를 반환합니다.', async () => {
       userCouponRepository.findUserCouponByUserIdAndCouponId.mockResolvedValue(null);
       couponRepository.findCouponById.mockResolvedValue(mockCouponEntity);
-      couponRepository.updateCouponStock.mockResolvedValue({ ...mockCouponEntity, remainingStock: 99 });
+      couponRepository.decrementStockWithPessimisticLock.mockResolvedValue({
+        ...mockCouponEntity,
+        remainingStock: 99,
+      });
       userCouponRepository.saveUserCoupon.mockResolvedValue(mockUserCouponEntity);
 
       const result = await service.issueCoupon(couponId, userId);
 
       expect(userCouponRepository.findUserCouponByUserIdAndCouponId).toHaveBeenCalledWith(userId, couponId);
       expect(couponRepository.findCouponById).toHaveBeenCalledWith(couponId);
-      expect(couponRepository.updateCouponStock).toHaveBeenCalledWith(couponId, 99);
+      expect(couponRepository.decrementStockWithPessimisticLock).toHaveBeenCalledWith(couponId);
       expect(userCouponRepository.saveUserCoupon).toHaveBeenCalledWith({
         userId,
         couponId,
