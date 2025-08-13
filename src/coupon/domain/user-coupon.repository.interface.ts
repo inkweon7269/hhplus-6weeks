@@ -11,7 +11,7 @@ export interface IUserCouponRepository {
   findAvailableUserCouponByCode(userId: number, couponCode: string): Promise<UserCouponEntity | null>;
   findUserCouponByUserIdAndCouponId(userId: number, couponId: number): Promise<UserCouponEntity | null>;
   saveUserCoupon(userCoupon: Partial<UserCouponEntity>): Promise<UserCouponEntity>;
-  markUserCouponAsUsed(userCouponId: number, usedDate: Date): Promise<void>;
+  markUserCouponAsUsed(userCouponId: number, usedDate: Date): Promise<UserCouponEntity>;
 }
 
 export const USER_COUPON_REPOSITORY = Symbol('USER_COUPON_REPOSITORY');

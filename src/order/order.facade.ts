@@ -20,13 +20,17 @@ export class OrderFacade {
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
-  // 트랜잭션 밖에서 무거운 조회/검증/계산을 모두 처리하고, 실제 데이터 변경(재고 차감, 쿠폰 사용, 잔액 차감, 주문 저장)만 짧은 트랜잭션으로 처리
   async pay(userId: number, request: CreateOrderRequest): Promise<CreateOrderResponse> {
     // 1) 주문 검증 및 상품 정보 조회 (읽기 전용)
     const { productInfos, orderProductOptions } = await this.getValidatedProductInfos(request);
 
     // 2) 주문 금액 계산 (쿠폰 할인 포함, 읽기 전용)
-    const amounts = await this.calculateOrderAmount(userId, request, productInfos);
+    const { totalAmount, discountAmount, finalAmount, couponInfo } = await this.calculateOrderAmount(
+      userId,
+      request,
+      productInfos,
+    );
+    const amounts = { totalAmount, discountAmount, finalAmount };
 
     // 3) 사용 금액 검증 (읽기 전용)
     if (request.usedAmount !== amounts.finalAmount) {
@@ -35,21 +39,7 @@ export class OrderFacade {
       );
     }
 
-    // 4) 쿠폰 사전 조회 (읽기 전용) - 실제 사용은 트랜잭션 내에서 처리
-    let couponInfo: { couponId: number; userCouponId: number; discountAmount: number } | null = null;
-    if (request.couponCode) {
-      const userCoupon = await this.couponService.findAvailableUserCouponByCode(userId, request.couponCode);
-      if (!userCoupon) {
-        throw new BadRequestException('사용할 수 없는 쿠폰입니다. 쿠폰이 존재하지 않거나 이미 사용되었습니다.');
-      }
-      couponInfo = {
-        couponId: userCoupon.couponId,
-        userCouponId: userCoupon.id,
-        discountAmount: amounts.discountAmount,
-      };
-    }
-
-    // 5) 실제 변경 작업만 트랜잭션으로 짧게 묶어서 처리
+    // 4) 실제 변경 작업만 트랜잭션으로 짧게 묶어서 처리
     const order = await this.confirmAndCreateOrder(userId, request, {
       orderProductOptions,
       amounts,
@@ -95,8 +85,11 @@ export class OrderFacade {
     await this.productOptionService.deductMultipleStock(orderProductOptions);
 
     // 2) 쿠폰 사용 (비관적 락 + 재시도)
+    let usedCoupon = null;
     if (couponInfo && request.couponCode) {
-      await this.couponService.useCoupon(userId, request.couponCode);
+      usedCoupon = await this.couponService.useCoupon(userId, request.couponCode);
+      couponInfo.couponId = usedCoupon.couponId;
+      couponInfo.userCouponId = usedCoupon.id;
     }
 
     // 3) 잔액 차감 (낙관적 락 + 재시도)
@@ -171,7 +164,12 @@ export class OrderFacade {
       optionId: number;
       optionName: string;
     }>,
-  ): Promise<{ totalAmount: number; discountAmount: number; finalAmount: number }> {
+  ): Promise<{
+    totalAmount: number;
+    discountAmount: number;
+    finalAmount: number;
+    couponInfo: { couponId: number; userCouponId: number; discountAmount: number } | null;
+  }> {
     let totalAmount = 0;
     for (const productRequest of request.products) {
       for (const optionRequest of productRequest.options) {
@@ -185,8 +183,16 @@ export class OrderFacade {
 
     // 쿠폰 할인 적용
     let discountAmount = 0;
+    let couponInfo: { couponId: number; userCouponId: number; discountAmount: number } | null = null;
+
     if (request.couponCode) {
-      discountAmount = await this.couponService.validateAndGetDiscountAmount(userId, request.couponCode);
+      const userCoupon = await this.couponService.validateAndGetCouponInfo(userId, request.couponCode);
+      discountAmount = userCoupon.coupon.discountAmount;
+      couponInfo = {
+        couponId: userCoupon.couponId,
+        userCouponId: userCoupon.id,
+        discountAmount,
+      };
     }
 
     const finalAmount = totalAmount - discountAmount;
@@ -199,6 +205,7 @@ export class OrderFacade {
       totalAmount,
       discountAmount,
       finalAmount,
+      couponInfo,
     };
   }
 }

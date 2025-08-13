@@ -65,13 +65,11 @@ export class UserCouponRepository implements IUserCouponRepository {
     return await this.userCouponRepo.save(entity);
   }
 
-  async markUserCouponAsUsed(userCouponId: number, usedDate: Date): Promise<void> {
-    await this.userCouponRepo.update(
-      { id: userCouponId },
-      {
-        status: UserCouponStatus.USED,
-        usedDate,
-      },
-    );
+  async markUserCouponAsUsed(userCouponId: number, usedDate: Date): Promise<UserCouponEntity> {
+    return await this.userCouponRepo.save({
+      id: userCouponId,
+      status: UserCouponStatus.USED,
+      usedDate,
+    });
   }
 }

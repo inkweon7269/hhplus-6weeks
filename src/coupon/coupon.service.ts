@@ -9,6 +9,7 @@ import { CouponStatus, UserCouponStatus } from './enum/coupon-status.enum';
 import { CouponEntity } from './domain/coupon.entity';
 import { Retry } from '../common/decorator/retry.decorator';
 import { QueryFailedError } from 'typeorm';
+import { UserCouponEntity } from './domain/user-coupon.entity';
 
 @Injectable()
 export class CouponService {
@@ -23,10 +24,10 @@ export class CouponService {
     maxAttempts: 3,
     baseDelay: 100,
     retryIf: (error: any) => {
-      return error instanceof QueryFailedError && 
-             (error.message?.includes('lock') || 
-              error.message?.includes('timeout') ||
-              error.message?.includes('deadlock'));
+      return (
+        error instanceof QueryFailedError &&
+        (error.message?.includes('lock') || error.message?.includes('timeout') || error.message?.includes('deadlock'))
+      );
     },
   })
   async issueCoupon(couponId: number, userId: number): Promise<UserCouponDetailResponse> {
@@ -118,7 +119,7 @@ export class CouponService {
     return await this.userCouponRepository.findAvailableUserCouponByCode(userId, couponCode);
   }
 
-  async validateAndGetDiscountAmount(userId: number, couponCode: string): Promise<number> {
+  async validateAndGetCouponInfo(userId: number, couponCode: string): Promise<UserCouponEntity> {
     const userCoupon = await this.userCouponRepository.findAvailableUserCouponByCode(userId, couponCode);
 
     if (!userCoupon) {
@@ -130,17 +131,12 @@ export class CouponService {
       throw new BadRequestException('만료된 쿠폰입니다.');
     }
 
-    return userCoupon.coupon.discountAmount;
+    return userCoupon;
   }
 
-  async useCoupon(userId: number, couponCode: string): Promise<void> {
-    const userCoupon = await this.userCouponRepository.findAvailableUserCouponByCode(userId, couponCode);
-
-    if (!userCoupon) {
-      throw new BadRequestException('사용할 수 없는 쿠폰입니다.');
-    }
-
+  async useCoupon(userId: number, couponCode: string): Promise<UserCouponEntity> {
+    const userCoupon = await this.validateAndGetCouponInfo(userId, couponCode);
     const usedDate = new Date();
-    await this.userCouponRepository.markUserCouponAsUsed(userCoupon.id, usedDate);
+    return await this.userCouponRepository.markUserCouponAsUsed(userCoupon.id, usedDate);
   }
 }
