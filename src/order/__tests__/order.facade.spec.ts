@@ -105,9 +105,8 @@ describe('OrderFacade', () => {
     };
 
     const mockCouponService = {
-      validateAndGetDiscountAmount: jest.fn(),
+      validateAndGetCouponInfo: jest.fn(),
       useCoupon: jest.fn(),
-      findAvailableUserCouponByCode: jest.fn(),
     };
 
     const mockEventEmitter = {
@@ -163,11 +162,26 @@ describe('OrderFacade', () => {
       // Arrange
       productService.getProductsForPayment.mockResolvedValue(mockProductInfos);
       productOptionService.checkMultipleStock.mockResolvedValue(undefined);
-      couponService.validateAndGetDiscountAmount.mockResolvedValue(5000);
-      couponService.findAvailableUserCouponByCode.mockResolvedValue(null);
+      const mockUserCoupon = {
+        id: 4,
+        userId: 1,
+        couponId: 2,
+        status: 'AVAILABLE' as any,
+        usedDate: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        user: {} as any,
+        coupon: { 
+          id: 2,
+          discountAmount: 5000,
+          expiryDate: new Date('2025-12-31'),
+        } as any,
+      } as any;
+      couponService.validateAndGetCouponInfo.mockResolvedValue(mockUserCoupon);
       balanceService.useBalance.mockResolvedValue(undefined);
       productOptionService.deductMultipleStock.mockResolvedValue(undefined);
-      couponService.useCoupon.mockResolvedValue(undefined);
+      const usedCoupon = { ...mockUserCoupon, status: 'USED', usedDate: new Date() };
+      couponService.useCoupon.mockResolvedValue(usedCoupon);
       orderService.createOrder.mockResolvedValue(mockCreateOrderResponse);
 
       // Act
@@ -176,7 +190,7 @@ describe('OrderFacade', () => {
       // Assert
       expect(productService.getProductsForPayment).toHaveBeenCalledWith([1, 2]);
       expect(productOptionService.checkMultipleStock).toHaveBeenCalledWith(mockOrderProductOptions);
-      expect(couponService.validateAndGetDiscountAmount).toHaveBeenCalledWith(
+      expect(couponService.validateAndGetCouponInfo).toHaveBeenCalledWith(
         userId,
         mockCreateOrderRequest.couponCode,
       );
@@ -192,7 +206,11 @@ describe('OrderFacade', () => {
           finalAmount: 2595000,
         },
         mockProductInfos,
-        null,
+        {
+          couponId: 2,
+          userCouponId: 4,
+          discountAmount: 5000,
+        },
       );
       expect(result).toEqual(mockCreateOrderResponse);
     });
@@ -201,7 +219,22 @@ describe('OrderFacade', () => {
       // Arrange
       productService.getProductsForPayment.mockResolvedValue(mockProductInfos);
       productOptionService.checkMultipleStock.mockResolvedValue(undefined);
-      couponService.validateAndGetDiscountAmount.mockResolvedValue(5000);
+      const mockUserCoupon = {
+        id: 4,
+        userId: 1,
+        couponId: 2,
+        status: 'AVAILABLE' as any,
+        usedDate: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        user: {} as any,
+        coupon: { 
+          id: 2,
+          discountAmount: 5000,
+          expiryDate: new Date('2025-12-31'),
+        } as any,
+      } as any;
+      couponService.validateAndGetCouponInfo.mockResolvedValue(mockUserCoupon);
 
       const requestWithWrongAmount = {
         ...mockCreateOrderRequest,
@@ -262,9 +295,8 @@ describe('OrderFacade', () => {
       const result = await facade.pay(userId, requestWithoutCoupon);
 
       // Assert
-      expect(couponService.validateAndGetDiscountAmount).not.toHaveBeenCalled();
+      expect(couponService.validateAndGetCouponInfo).not.toHaveBeenCalled();
       expect(couponService.useCoupon).not.toHaveBeenCalled();
-      expect(couponService.findAvailableUserCouponByCode).not.toHaveBeenCalled();
       expect(orderService.createOrder).toHaveBeenCalledWith(
         userId,
         requestWithoutCoupon,
@@ -285,27 +317,32 @@ describe('OrderFacade', () => {
         id: 4,
         userId: 1,
         couponId: 2,
-        status: 'AVAILABLE',
+        status: 'AVAILABLE' as any,
         couponCode: 'DISCOUNT10',
-      };
+        usedDate: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        user: {} as any,
+        coupon: { 
+          id: 2,
+          discountAmount: 5000,
+          expiryDate: new Date('2025-12-31'),
+        } as any,
+      } as any;
 
       productService.getProductsForPayment.mockResolvedValue(mockProductInfos);
       productOptionService.checkMultipleStock.mockResolvedValue(undefined);
-      couponService.validateAndGetDiscountAmount.mockResolvedValue(5000);
-      couponService.findAvailableUserCouponByCode.mockResolvedValue(mockUserCoupon);
+      couponService.validateAndGetCouponInfo.mockResolvedValue(mockUserCoupon);
       balanceService.useBalance.mockResolvedValue(undefined);
       productOptionService.deductMultipleStock.mockResolvedValue(undefined);
-      couponService.useCoupon.mockResolvedValue(undefined);
+      const usedCoupon = { ...mockUserCoupon, status: 'USED', usedDate: new Date() };
+      couponService.useCoupon.mockResolvedValue(usedCoupon);
       orderService.createOrder.mockResolvedValue(mockCreateOrderResponse);
 
       // Act
       const result = await facade.pay(userId, mockCreateOrderRequest);
 
       // Assert
-      expect(couponService.findAvailableUserCouponByCode).toHaveBeenCalledWith(
-        userId,
-        mockCreateOrderRequest.couponCode,
-      );
       expect(couponService.useCoupon).toHaveBeenCalledWith(userId, mockCreateOrderRequest.couponCode);
       expect(orderService.createOrder).toHaveBeenCalledWith(
         userId,
@@ -329,21 +366,32 @@ describe('OrderFacade', () => {
       // Arrange
       productService.getProductsForPayment.mockResolvedValue(mockProductInfos);
       productOptionService.checkMultipleStock.mockResolvedValue(undefined);
-      couponService.validateAndGetDiscountAmount.mockResolvedValue(5000);
-      couponService.findAvailableUserCouponByCode.mockResolvedValue(null);
+      const mockUserCoupon = {
+        id: 4,
+        userId: 1,
+        couponId: 2,
+        status: 'AVAILABLE' as any,
+        usedDate: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        user: {} as any,
+        coupon: { 
+          id: 2,
+          discountAmount: 5000,
+          expiryDate: new Date('2025-12-31'),
+        } as any,
+      } as any;
+      couponService.validateAndGetCouponInfo.mockResolvedValue(mockUserCoupon);
       balanceService.useBalance.mockResolvedValue(undefined);
       productOptionService.deductMultipleStock.mockResolvedValue(undefined);
-      couponService.useCoupon.mockResolvedValue(undefined);
+      const usedCoupon = { ...mockUserCoupon, status: 'USED', usedDate: new Date() };
+      couponService.useCoupon.mockResolvedValue(usedCoupon);
       orderService.createOrder.mockResolvedValue(mockCreateOrderResponse);
 
       // Act
       const result = await facade.pay(userId, mockCreateOrderRequest);
 
       // Assert
-      expect(couponService.findAvailableUserCouponByCode).toHaveBeenCalledWith(
-        userId,
-        mockCreateOrderRequest.couponCode,
-      );
       expect(couponService.useCoupon).toHaveBeenCalledWith(userId, mockCreateOrderRequest.couponCode);
       expect(orderService.createOrder).toHaveBeenCalledWith(
         userId,
@@ -354,7 +402,11 @@ describe('OrderFacade', () => {
           finalAmount: 2595000,
         },
         mockProductInfos,
-        null, // 쿠폰 정보 없음
+        {
+          couponId: 2,
+          userCouponId: 4,
+          discountAmount: 5000,
+        },
       );
       expect(result).toEqual(mockCreateOrderResponse);
     });
@@ -363,7 +415,22 @@ describe('OrderFacade', () => {
       // Arrange
       productService.getProductsForPayment.mockResolvedValue(mockProductInfos);
       productOptionService.checkMultipleStock.mockResolvedValue(undefined);
-      couponService.validateAndGetDiscountAmount.mockResolvedValue(3000000); // 주문 금액보다 큰 할인
+      const mockUserCoupon = {
+        id: 4,
+        userId: 1,
+        couponId: 2,
+        status: 'AVAILABLE' as any,
+        usedDate: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        user: {} as any,
+        coupon: { 
+          id: 2,
+          discountAmount: 3000000, // 주문 금액보다 큰 할인
+          expiryDate: new Date('2025-12-31'),
+        } as any,
+      } as any;
+      couponService.validateAndGetCouponInfo.mockResolvedValue(mockUserCoupon);
 
       // Act & Assert
       await expect(facade.pay(userId, mockCreateOrderRequest)).rejects.toThrow(

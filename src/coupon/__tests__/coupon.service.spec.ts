@@ -195,40 +195,6 @@ describe('CouponService', () => {
     });
   });
 
-  describe('validateAndGetDiscountAmount', () => {
-    const userId = 1;
-    const couponCode = 'DISCOUNT10';
-
-    it('사용할 수 없는 쿠폰일 때 BadRequestException을 발생시킵니다.', async () => {
-      userCouponRepository.findAvailableUserCouponByCode.mockResolvedValue(null);
-
-      await expect(service.validateAndGetDiscountAmount(userId, couponCode)).rejects.toThrow(
-        new BadRequestException('사용할 수 없는 쿠폰입니다. 쿠폰이 존재하지 않거나 이미 사용되었습니다.'),
-      );
-      expect(userCouponRepository.findAvailableUserCouponByCode).toHaveBeenCalledWith(userId, couponCode);
-    });
-
-    it('만료된 쿠폰일 때 BadRequestException을 발생시킵니다.', async () => {
-      const expiredUserCoupon = {
-        ...mockUserCouponEntity,
-        coupon: { ...mockCouponEntity, expiryDate: new Date('2023-12-31') },
-      };
-      userCouponRepository.findAvailableUserCouponByCode.mockResolvedValue(expiredUserCoupon);
-
-      await expect(service.validateAndGetDiscountAmount(userId, couponCode)).rejects.toThrow(
-        new BadRequestException('만료된 쿠폰입니다.'),
-      );
-    });
-
-    it('정상적인 경우 할인 금액을 반환합니다.', async () => {
-      userCouponRepository.findAvailableUserCouponByCode.mockResolvedValue(mockUserCouponEntity);
-
-      const result = await service.validateAndGetDiscountAmount(userId, couponCode);
-
-      expect(result).toEqual(mockCouponEntity.discountAmount);
-      expect(userCouponRepository.findAvailableUserCouponByCode).toHaveBeenCalledWith(userId, couponCode);
-    });
-  });
 
   describe('useCoupon', () => {
     const userId = 1;
@@ -238,42 +204,22 @@ describe('CouponService', () => {
       userCouponRepository.findAvailableUserCouponByCode.mockResolvedValue(null);
 
       await expect(service.useCoupon(userId, couponCode)).rejects.toThrow(
-        new BadRequestException('사용할 수 없는 쿠폰입니다.'),
+        new BadRequestException('사용할 수 없는 쿠폰입니다. 쿠폰이 존재하지 않거나 이미 사용되었습니다.'),
       );
       expect(userCouponRepository.findAvailableUserCouponByCode).toHaveBeenCalledWith(userId, couponCode);
     });
 
-    it('정상적인 경우 쿠폰을 사용 처리합니다.', async () => {
+    it('정상적인 경우 쿠폰을 사용 처리하고 업데이트된 쿠폰 정보를 반환합니다.', async () => {
+      const usedUserCoupon = { ...mockUserCouponEntity, status: UserCouponStatus.USED, usedDate: new Date() };
       userCouponRepository.findAvailableUserCouponByCode.mockResolvedValue(mockUserCouponEntity);
-      userCouponRepository.markUserCouponAsUsed.mockResolvedValue(undefined);
+      userCouponRepository.markUserCouponAsUsed.mockResolvedValue(usedUserCoupon);
 
-      await service.useCoupon(userId, couponCode);
+      const result = await service.useCoupon(userId, couponCode);
 
+      expect(result).toEqual(usedUserCoupon);
       expect(userCouponRepository.findAvailableUserCouponByCode).toHaveBeenCalledWith(userId, couponCode);
       expect(userCouponRepository.markUserCouponAsUsed).toHaveBeenCalledWith(mockUserCouponEntity.id, expect.any(Date));
     });
   });
 
-  describe('findAvailableUserCouponByCode', () => {
-    const userId = 1;
-    const couponCode = 'DISCOUNT10';
-
-    it('사용 가능한 쿠폰을 반환합니다.', async () => {
-      userCouponRepository.findAvailableUserCouponByCode.mockResolvedValue(mockUserCouponEntity);
-
-      const result = await service.findAvailableUserCouponByCode(userId, couponCode);
-
-      expect(result).toEqual(mockUserCouponEntity);
-      expect(userCouponRepository.findAvailableUserCouponByCode).toHaveBeenCalledWith(userId, couponCode);
-    });
-
-    it('사용할 수 없는 쿠폰일 때 null을 반환합니다.', async () => {
-      userCouponRepository.findAvailableUserCouponByCode.mockResolvedValue(null);
-
-      const result = await service.findAvailableUserCouponByCode(userId, couponCode);
-
-      expect(result).toBeNull();
-      expect(userCouponRepository.findAvailableUserCouponByCode).toHaveBeenCalledWith(userId, couponCode);
-    });
-  });
 });
