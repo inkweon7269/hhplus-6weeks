@@ -115,9 +115,6 @@ export class CouponService {
     return coupon;
   }
 
-  async findAvailableUserCouponByCode(userId: number, couponCode: string): Promise<any> {
-    return await this.userCouponRepository.findAvailableUserCouponByCode(userId, couponCode);
-  }
 
   async validateAndGetCouponInfo(userId: number, couponCode: string): Promise<UserCouponEntity> {
     const userCoupon = await this.userCouponRepository.findAvailableUserCouponByCode(userId, couponCode);
