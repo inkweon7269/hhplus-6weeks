@@ -11,6 +11,7 @@ import { Retry } from '../common/decorator/retry.decorator';
 import { QueryFailedError } from 'typeorm';
 import { UserCouponEntity } from './domain/user-coupon.entity';
 import { RedisLockService } from '../redis/redis-lock.service';
+import { RedisCacheService } from '../redis/redis-cache.service';
 
 @Injectable()
 export class CouponService {
@@ -20,6 +21,7 @@ export class CouponService {
     @Inject(USER_COUPON_REPOSITORY)
     private readonly userCouponRepository: IUserCouponRepository,
     private readonly redisLockService: RedisLockService,
+    private readonly redisCacheService: RedisCacheService,
   ) {}
 
   async issueCoupon(couponId: number, userId: number): Promise<UserCouponDetailResponse> {
@@ -71,13 +73,29 @@ export class CouponService {
 
     userCoupon.coupon = updatedCoupon;
 
+    // 쿠폰 발급 후 해당 사용자의 쿠폰 목록 캐시 무효화
+    await this.invalidateUserCouponCache(userId);
+    // 재고가 변경되었으므로 전체 쿠폰 목록 캐시도 무효화
+    await this.invalidateCouponListCache();
+
     return UserCouponDetailResponse.of(userCoupon);
   }
 
   async getCoupons(query: GetCouponsRequest): Promise<GetCouponsResponse> {
     const page = query.page;
     const limit = query.limit;
+    const status = query.status || 'all';
 
+    // 캐시 키 생성
+    const cacheKey = `coupons:list:page:${page}:limit:${limit}:status:${status}`;
+
+    // 캐시에서 먼저 조회
+    const cachedCoupons = await this.redisCacheService.get<GetCouponsResponse>(cacheKey);
+    if (cachedCoupons) {
+      return cachedCoupons;
+    }
+
+    // 캐시에 없으면 DB에서 조회
     const [paginatedCoupons, totalCount] = await this.couponRepository.findCoupons(page, limit, query.status);
 
     const totalPages = Math.ceil(totalCount / limit);
@@ -88,6 +106,9 @@ export class CouponService {
     response.currentPage = page;
     response.totalPages = totalPages;
 
+    // 조회된 결과를 캐시에 저장 (5분 TTL)
+    await this.redisCacheService.set(cacheKey, response, 300);
+
     return response;
   }
 
@@ -95,6 +116,16 @@ export class CouponService {
     const page = query.page;
     const limit = query.limit;
 
+    // 캐시 키 생성
+    const cacheKey = `user:${userId}:coupons:page:${page}:limit:${limit}`;
+
+    // 캐시에서 먼저 조회
+    const cachedUserCoupons = await this.redisCacheService.get<GetUserCouponsResponse>(cacheKey);
+    if (cachedUserCoupons) {
+      return cachedUserCoupons;
+    }
+
+    // 캐시에 없으면 DB에서 조회
     const [paginatedUserCoupons, totalCount] = await this.userCouponRepository.findUserCoupons(userId, page, limit);
 
     const totalPages = Math.ceil(totalCount / limit);
@@ -104,6 +135,9 @@ export class CouponService {
     response.totalCount = totalCount;
     response.currentPage = page;
     response.totalPages = totalPages;
+
+    // 조회된 결과를 캐시에 저장 (3분 TTL - 사용자별 데이터이므로 짧은 TTL)
+    await this.redisCacheService.set(cacheKey, response, 180);
 
     return response;
   }
@@ -156,6 +190,27 @@ export class CouponService {
   async useCoupon(userId: number, couponCode: string): Promise<UserCouponEntity> {
     const userCoupon = await this.validateAndGetCouponInfo(userId, couponCode);
     const usedDate = new Date();
-    return await this.userCouponRepository.markUserCouponAsUsed(userCoupon.id, usedDate);
+    const result = await this.userCouponRepository.markUserCouponAsUsed(userCoupon.id, usedDate);
+    
+    // 쿠폰 사용 후 해당 사용자의 쿠폰 목록 캐시 무효화
+    await this.invalidateUserCouponCache(userId);
+    
+    return result;
+  }
+
+  /**
+   * 사용자 쿠폰 목록 캐시 무효화
+   */
+  private async invalidateUserCouponCache(userId: number): Promise<void> {
+    // 사용자의 모든 페이지 캐시 무효화
+    await this.redisCacheService.delPattern(`user:${userId}:coupons:*`);
+  }
+
+  /**
+   * 전체 쿠폰 목록 캐시 무효화
+   */
+  private async invalidateCouponListCache(): Promise<void> {
+    // 모든 쿠폰 목록 캐시 무효화
+    await this.redisCacheService.delPattern('coupons:list:*');
   }
 }
