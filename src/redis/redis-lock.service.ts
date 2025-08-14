@@ -9,6 +9,13 @@ export interface LockOptions {
   retryDelayMs?: number;
 }
 
+export interface LockValue {
+  methodName: string;
+  userId?: number;
+  timestamp: string;
+  requestData?: Record<string, any>;
+}
+
 @Injectable()
 export class RedisLockService {
   private readonly logger = new Logger(RedisLockService.name);
@@ -33,7 +40,11 @@ export class RedisLockService {
       const acquired = result === 'OK';
 
       if (acquired) {
-        this.logger.debug(`Lock acquired: ${lockKey} with value ${lockValue}`);
+        const parsedValue = this.parseLockValue(lockValue);
+        const requestInfo = parsedValue?.requestData ? `, data: ${JSON.stringify(parsedValue.requestData)}` : '';
+        this.logger.debug(
+          `Lock acquired: ${lockKey} (method: ${parsedValue?.methodName}, user: ${parsedValue?.userId}${requestInfo})`,
+        );
       }
 
       return acquired;
@@ -56,19 +67,23 @@ export class RedisLockService {
     try {
       // 1. 현재 락 값 확인
       const currentValue = await this.redis.get(lockKey);
-      
+
       // 2. 락이 존재하지 않거나 값이 일치하지 않으면 해제 실패
       if (currentValue !== lockValue) {
         this.logger.warn(`Failed to release lock ${lockKey}: value mismatch or lock not found`);
         return false;
       }
-      
+
       // 3. 값이 일치하면 락 삭제
       const deleteResult = await this.redis.del(lockKey);
       const released = deleteResult === 1;
 
       if (released) {
-        this.logger.debug(`Lock released: ${lockKey}`);
+        const parsedValue = this.parseLockValue(lockValue);
+        const requestInfo = parsedValue?.requestData ? `, data: ${JSON.stringify(parsedValue.requestData)}` : '';
+        this.logger.debug(
+          `Lock released: ${lockKey} (method: ${parsedValue?.methodName}, user: ${parsedValue?.userId}${requestInfo})`,
+        );
       }
 
       return released;
@@ -121,29 +136,33 @@ export class RedisLockService {
     try {
       // 1. 현재 락 값 확인
       const currentValue = await this.redis.get(lockKey);
-      
+
       // 2. 락이 존재하지 않거나 값이 일치하지 않으면 연장 실패
       if (currentValue !== lockValue) {
         this.logger.warn(`Failed to extend lock ${lockKey}: value mismatch or lock not found`);
         return false;
       }
-      
+
       // 3. 현재 TTL 확인
       const currentTtl = await this.redis.ttl(lockKey);
-      
+
       // 4. TTL이 유효하지 않으면 연장 실패
       if (currentTtl <= 0) {
         this.logger.warn(`Failed to extend lock ${lockKey}: invalid TTL ${currentTtl}`);
         return false;
       }
-      
+
       // 5. 새로운 TTL로 연장
       const newTtl = currentTtl + additionalSeconds;
       const extendResult = await this.redis.expire(lockKey, newTtl);
       const extended = extendResult === 1;
 
       if (extended) {
-        this.logger.debug(`Lock TTL extended for ${lockKey}: ${currentTtl}s → ${newTtl}s`);
+        const parsedValue = this.parseLockValue(lockValue);
+        const requestInfo = parsedValue?.requestData ? `, data: ${JSON.stringify(parsedValue.requestData)}` : '';
+        this.logger.debug(
+          `Lock TTL extended for ${lockKey}: ${currentTtl}s → ${newTtl}s (method: ${parsedValue?.methodName}, user: ${parsedValue?.userId}${requestInfo})`,
+        );
       }
 
       return extended;
@@ -191,13 +210,34 @@ export class RedisLockService {
   }
 
   /**
-   * 락 값 생성 헬퍼 메서드
+   * 락 값 생성 헬퍼 메서드 (객체 형태)
    * @param methodName 메서드명
    * @param userId 사용자 ID (옵션)
-   * @returns 포맷팅된 락 값
+   * @param requestData 요청 데이터 (옵션)
+   * @returns JSON 형태의 락 값
    */
-  generateLockValue(methodName: string, userId?: number): string {
-    const timestamp = dayjs().format('YYYY-MM-DD_HH:mm:ss.SSS');
-    return userId ? `${methodName}:${userId}:${timestamp}` : `${methodName}:${timestamp}`;
+  generateLockValue(methodName: string, userId?: number, requestData?: Record<string, any>): string {
+    const lockValue: LockValue = {
+      methodName,
+      userId,
+      timestamp: dayjs().format('YYYY-MM-DD_HH:mm:ss.SSS'),
+      requestData,
+    };
+
+    return JSON.stringify(lockValue);
+  }
+
+  /**
+   * 락 값 파싱 헬퍼 메서드
+   * @param lockValueString JSON 문자열 형태의 락 값
+   * @returns 파싱된 락 값 객체 또는 null
+   */
+  parseLockValue(lockValueString: string): LockValue | null {
+    try {
+      return JSON.parse(lockValueString) as LockValue;
+    } catch (error) {
+      this.logger.warn(`Failed to parse lock value: ${lockValueString}`);
+      return null;
+    }
   }
 }
