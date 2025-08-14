@@ -21,6 +21,7 @@ import { OrderCouponEntity } from './domain/order-coupon.entity';
 import { BalanceModule } from '../balance/balance.module';
 import { ProductModule } from '../product/product.module';
 import { CouponModule } from '../coupon/coupon.module';
+import { RedisModule } from '../redis/redis.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { CouponModule } from '../coupon/coupon.module';
     BalanceModule,
     ProductModule,
     CouponModule,
+    RedisModule,
   ],
   controllers: [OrderController],
   providers: [

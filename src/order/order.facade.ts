@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { OrderService } from './order.service';
 import { BalanceService } from '../balance/balance.service';
@@ -8,6 +8,7 @@ import { CouponService } from '../coupon/coupon.service';
 import { CreateOrderRequest } from './dto/request/create-order-request';
 import { CreateOrderResponse } from './dto/response/create-order-response';
 import { Transactional } from 'typeorm-transactional';
+import { RedisLockService } from '../redis/redis-lock.service';
 
 @Injectable()
 export class OrderFacade {
@@ -18,45 +19,64 @@ export class OrderFacade {
     private readonly productOptionService: ProductOptionService,
     private readonly couponService: CouponService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly redisLockService: RedisLockService,
   ) {}
 
   async pay(userId: number, request: CreateOrderRequest): Promise<CreateOrderResponse> {
-    // 1) 주문 검증 및 상품 정보 조회 (읽기 전용)
-    const { productInfos, orderProductOptions } = await this.getValidatedProductInfos(request);
+    const lockKey = `pay:order:${userId}`;
+    const lockValue = this.redisLockService.generateLockValue('pay', userId, request);
+    const lockTTL = 15; // 주문 처리는 더 오래 걸릴 수 있으므로 15초
 
-    // 2) 주문 금액 계산 (쿠폰 할인 포함, 읽기 전용)
-    const { totalAmount, discountAmount, finalAmount, couponInfo } = await this.calculateOrderAmount(
-      userId,
-      request,
-      productInfos,
-    );
-    const amounts = { totalAmount, discountAmount, finalAmount };
+    const acquired = await this.redisLockService.tryAcquireLock(lockKey, lockValue, {
+      ttlSeconds: lockTTL,
+      retryAttempts: 3,
+      retryDelayMs: 200,
+    });
 
-    // 3) 사용 금액 검증 (읽기 전용)
-    if (request.usedAmount !== amounts.finalAmount) {
-      throw new BadRequestException(
-        `사용 금액이 주문 금액과 일치하지 않습니다. 실제 주문 금액: ${amounts.finalAmount.toLocaleString()}원, 요청 사용 금액: ${request.usedAmount.toLocaleString()}원`,
-      );
+    if (!acquired) {
+      throw new ConflictException(`주문 처리가 진행 중입니다. 잠시 후 다시 시도해주세요. (사용자: ${userId})`);
     }
 
-    // 4) 실제 변경 작업만 트랜잭션으로 짧게 묶어서 처리
-    const order = await this.confirmAndCreateOrder(userId, request, {
-      orderProductOptions,
-      amounts,
-      productInfos,
-      couponInfo,
-    });
+    try {
+      // 1) 주문 검증 및 상품 정보 조회 (읽기 전용)
+      const { productInfos, orderProductOptions } = await this.getValidatedProductInfos(request);
 
-    // 6) 커밋 이후 주문 생성 이벤트 발생 (비동기)
-    this.eventEmitter.emit('order.created', {
-      orderId: order.orderId,
-      orderProducts: request.products.map((product) => ({
-        productId: product.productId,
-      })),
-      createdAt: new Date(order.createdAt),
-    });
+      // 2) 주문 금액 계산 (쿠폰 할인 포함, 읽기 전용)
+      const { totalAmount, discountAmount, finalAmount, couponInfo } = await this.calculateOrderAmount(
+        userId,
+        request,
+        productInfos,
+      );
+      const amounts = { totalAmount, discountAmount, finalAmount };
 
-    return order;
+      // 3) 사용 금액 검증 (읽기 전용)
+      if (request.usedAmount !== amounts.finalAmount) {
+        throw new BadRequestException(
+          `사용 금액이 주문 금액과 일치하지 않습니다. 실제 주문 금액: ${amounts.finalAmount.toLocaleString()}원, 요청 사용 금액: ${request.usedAmount.toLocaleString()}원`,
+        );
+      }
+
+      // 4) 실제 변경 작업만 트랜잭션으로 짧게 묶어서 처리
+      const order = await this.confirmAndCreateOrder(userId, request, {
+        orderProductOptions,
+        amounts,
+        productInfos,
+        couponInfo,
+      });
+
+      // 6) 커밋 이후 주문 생성 이벤트 발생 (비동기)
+      this.eventEmitter.emit('order.created', {
+        orderId: order.orderId,
+        orderProducts: request.products.map((product) => ({
+          productId: product.productId,
+        })),
+        createdAt: new Date(order.createdAt),
+      });
+
+      return order;
+    } finally {
+      await this.redisLockService.releaseLock(lockKey, lockValue);
+    }
   }
 
   // 짧은 트랜잭션 경계 — 실제 변경(재고 차감 → 쿠폰 사용 → 잔액 차감 → 주문 저장)만 포함

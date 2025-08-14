@@ -25,7 +25,7 @@ export class BalanceService {
 
   async rechargeBalance(userId: number, request: BalanceRechargeRequest) {
     const lockKey = `recharge:balance:${userId}`;
-    const lockValue = this.redisLockService.generateLockValue('rechargeBalance', userId, { amount: request.amount });
+    const lockValue = this.redisLockService.generateLockValue('rechargeBalance', userId, request);
     const lockTTL = 10;
 
     const acquired = await this.redisLockService.tryAcquireLock(lockKey, lockValue, {
