@@ -9,9 +9,10 @@ import { CouponRepository } from './domain/coupon.repository';
 import { UserCouponRepository } from './domain/user-coupon.repository';
 import { COUPON_REPOSITORY } from './domain/coupon.repository.interface';
 import { USER_COUPON_REPOSITORY } from './domain/user-coupon.repository.interface';
+import { RedisModule } from '../redis/redis.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([CouponEntity, UserCouponEntity])],
+  imports: [TypeOrmModule.forFeature([CouponEntity, UserCouponEntity]), RedisModule],
   controllers: [CouponController],
   providers: [
     {

@@ -13,3 +13,11 @@ services:
     volumes:
       - ./db/postgres/data:/var/lib/postgresql/data
 
+  redis:
+    image: redis:7.4-alpine
+    container_name: hhplus-redis
+    restart: always
+    ports:
+      - '6380:6379'
+    environment:
+      TZ: Asia/Seoul

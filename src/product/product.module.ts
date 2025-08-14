@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { RedisModule } from '../redis/redis.module';
 import { ProductController } from './product.controller';
 import { ProductService } from './product.service';
 import { ProductOptionService } from './product-option.service';
@@ -24,6 +25,7 @@ import { PRODUCT_SALES_DAILY_REPOSITORY } from './domain/product-sales-daily.rep
     TypeOrmModule.forFeature([ProductEntity, ProductOptionEntity, ProductSalesDailyEntity]),
     ScheduleModule.forRoot(),
     EventEmitterModule.forRoot(),
+    RedisModule,
   ],
   controllers: [ProductController],
   providers: [

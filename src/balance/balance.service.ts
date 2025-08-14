@@ -1,14 +1,16 @@
-import { Injectable, BadRequestException, NotFoundException, Inject } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Inject, ConflictException } from '@nestjs/common';
 import { IBalanceRepository, BALANCE_REPOSITORY } from './domain/balance.repository.interface';
 import { BalanceRechargeRequest } from './dto/request/balance-recharge-request';
 import { Retry } from '../common/decorator/retry.decorator';
 import { OptimisticLockException } from '../common/exception/optimistic-lock.exception';
+import { RedisLockService } from '../redis/redis-lock.service';
 
 @Injectable()
 export class BalanceService {
   constructor(
     @Inject(BALANCE_REPOSITORY)
     private readonly balanceRepository: IBalanceRepository,
+    private readonly redisLockService: RedisLockService,
   ) {}
 
   async getBalance(userId: number) {
@@ -21,12 +23,34 @@ export class BalanceService {
     return userBalance;
   }
 
+  async rechargeBalance(userId: number, request: BalanceRechargeRequest) {
+    const lockKey = `recharge:balance:${userId}`;
+    const lockValue = this.redisLockService.generateLockValue('rechargeBalance', userId, request);
+    const lockTTL = 10;
+
+    const acquired = await this.redisLockService.tryAcquireLock(lockKey, lockValue, {
+      ttlSeconds: lockTTL,
+      retryAttempts: 3,
+      retryDelayMs: 100,
+    });
+
+    if (!acquired) {
+      throw new ConflictException(`잔액 충전이 진행 중입니다. 잠시 후 다시 시도해주세요. (사용자: ${userId})`);
+    }
+
+    try {
+      return await this.executeRechargeWithRetry(userId, request);
+    } finally {
+      await this.redisLockService.releaseLock(lockKey, lockValue);
+    }
+  }
+
   @Retry({
     maxAttempts: 3,
     baseDelay: 50,
     retryIf: (error: any) => error instanceof OptimisticLockException,
   })
-  async rechargeBalance(userId: number, request: BalanceRechargeRequest) {
+  private async executeRechargeWithRetry(userId: number, request: BalanceRechargeRequest) {
     try {
       // 최신 잔액 정보 조회
       const balanceEntity = await this.balanceRepository.findByUserId(userId);
@@ -48,12 +72,34 @@ export class BalanceService {
     }
   }
 
+  async useBalance(userId: number, usedAmount: number) {
+    const lockKey = `use:balance:${userId}`;
+    const lockValue = this.redisLockService.generateLockValue('useBalance', userId, { usedAmount });
+    const lockTTL = 10;
+
+    const acquired = await this.redisLockService.tryAcquireLock(lockKey, lockValue, {
+      ttlSeconds: lockTTL,
+      retryAttempts: 3,
+      retryDelayMs: 100,
+    });
+
+    if (!acquired) {
+      throw new ConflictException(`잔액 사용이 진행 중입니다. 잠시 후 다시 시도해주세요. (사용자: ${userId})`);
+    }
+
+    try {
+      return await this.executeUseBalanceWithRetry(userId, usedAmount);
+    } finally {
+      await this.redisLockService.releaseLock(lockKey, lockValue);
+    }
+  }
+
   @Retry({
     maxAttempts: 3,
     baseDelay: 50,
     retryIf: (error: any) => error instanceof OptimisticLockException,
   })
-  async useBalance(userId: number, usedAmount: number) {
+  private async executeUseBalanceWithRetry(userId: number, usedAmount: number) {
     this.validateUsedAmount(usedAmount);
 
     try {

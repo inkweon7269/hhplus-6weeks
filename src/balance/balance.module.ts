@@ -6,9 +6,10 @@ import { BalanceFacade } from './balance.facade';
 import { BalanceRepository } from './domain/balance.repository';
 import { BalanceEntity } from './domain/balance.entity';
 import { BALANCE_REPOSITORY } from './domain/balance.repository.interface';
+import { RedisModule } from '../redis/redis.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([BalanceEntity])],
+  imports: [TypeOrmModule.forFeature([BalanceEntity]), RedisModule],
   controllers: [BalanceController],
   providers: [
     {
