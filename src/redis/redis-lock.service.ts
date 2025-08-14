@@ -27,19 +27,10 @@ export class RedisLockService {
     const lockKey = `${this.lockPrefix}${key}`;
 
     try {
-      // Lua 스크립트를 사용하여 원자적으로 SET NX EX 수행
-      const luaScript = `
-        if redis.call("EXISTS", KEYS[1]) == 0 then
-          redis.call("SET", KEYS[1], ARGV[1], "EX", ARGV[2])
-          return 1
-        else
-          return 0
-        end
-      `;
+      // SET 명령어의 객체 옵션 사용 - 원자적 락 획득
+      const result = await this.redis.set(lockKey, lockValue, 'EX', ttlSeconds, 'NX');
 
-      const result = (await this.redis.eval(luaScript, 1, lockKey, lockValue, ttlSeconds)) as number;
-
-      const acquired = result === 1;
+      const acquired = result === 'OK';
 
       if (acquired) {
         this.logger.debug(`Lock acquired: ${lockKey} with value ${lockValue}`);
@@ -54,7 +45,7 @@ export class RedisLockService {
 
   /**
    * Redis Simple Lock 해제
-   * Lua 스크립트를 사용하여 원자적으로 처리
+   * GET + DEL 명령어 조합으로 안전하게 처리
    * @param key 락 키
    * @param lockValue 락 소유자 식별 값
    * @returns 락 해제 성공 여부
@@ -62,24 +53,22 @@ export class RedisLockService {
   async releaseLock(key: string, lockValue: string): Promise<boolean> {
     const lockKey = `${this.lockPrefix}${key}`;
 
-    // Lua 스크립트: 값이 일치할 때만 삭제
-    const luaScript = `
-      if redis.call("GET", KEYS[1]) == ARGV[1] then
-        return redis.call("DEL", KEYS[1])
-      else
-        return 0
-      end
-    `;
-
     try {
-      const result = (await this.redis.eval(luaScript, 1, lockKey, lockValue)) as number;
-
-      const released = result === 1;
+      // 1. 현재 락 값 확인
+      const currentValue = await this.redis.get(lockKey);
+      
+      // 2. 락이 존재하지 않거나 값이 일치하지 않으면 해제 실패
+      if (currentValue !== lockValue) {
+        this.logger.warn(`Failed to release lock ${lockKey}: value mismatch or lock not found`);
+        return false;
+      }
+      
+      // 3. 값이 일치하면 락 삭제
+      const deleteResult = await this.redis.del(lockKey);
+      const released = deleteResult === 1;
 
       if (released) {
         this.logger.debug(`Lock released: ${lockKey}`);
-      } else {
-        this.logger.warn(`Failed to release lock ${lockKey}: value mismatch or lock not found`);
       }
 
       return released;
@@ -120,6 +109,7 @@ export class RedisLockService {
 
   /**
    * 락 TTL 연장
+   * GET + TTL + EXPIRE 명령어 조합으로 처리
    * @param key 락 키
    * @param lockValue 락 소유자 식별 값
    * @param additionalSeconds 추가 TTL (초)
@@ -128,24 +118,32 @@ export class RedisLockService {
   async extendLock(key: string, lockValue: string, additionalSeconds: number): Promise<boolean> {
     const lockKey = `${this.lockPrefix}${key}`;
 
-    // Lua 스크립트: 값이 일치하고 키가 존재할 때만 TTL 연장
-    const luaScript = `
-      if redis.call("GET", KEYS[1]) == ARGV[1] then
-        local currentTtl = redis.call("TTL", KEYS[1])
-        if currentTtl > 0 then
-          return redis.call("EXPIRE", KEYS[1], currentTtl + ARGV[2])
-        end
-      end
-      return 0
-    `;
-
     try {
-      const result = (await this.redis.eval(luaScript, 1, lockKey, lockValue, additionalSeconds)) as number;
-
-      const extended = result === 1;
+      // 1. 현재 락 값 확인
+      const currentValue = await this.redis.get(lockKey);
+      
+      // 2. 락이 존재하지 않거나 값이 일치하지 않으면 연장 실패
+      if (currentValue !== lockValue) {
+        this.logger.warn(`Failed to extend lock ${lockKey}: value mismatch or lock not found`);
+        return false;
+      }
+      
+      // 3. 현재 TTL 확인
+      const currentTtl = await this.redis.ttl(lockKey);
+      
+      // 4. TTL이 유효하지 않으면 연장 실패
+      if (currentTtl <= 0) {
+        this.logger.warn(`Failed to extend lock ${lockKey}: invalid TTL ${currentTtl}`);
+        return false;
+      }
+      
+      // 5. 새로운 TTL로 연장
+      const newTtl = currentTtl + additionalSeconds;
+      const extendResult = await this.redis.expire(lockKey, newTtl);
+      const extended = extendResult === 1;
 
       if (extended) {
-        this.logger.debug(`Lock TTL extended for ${lockKey}`);
+        this.logger.debug(`Lock TTL extended for ${lockKey}: ${currentTtl}s → ${newTtl}s`);
       }
 
       return extended;
