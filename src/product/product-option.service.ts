@@ -1,11 +1,13 @@
-import { Injectable, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, BadRequestException, Inject, ConflictException } from '@nestjs/common';
 import { IProductOptionRepository, PRODUCT_OPTION_REPOSITORY } from './domain/product-option.repository.interface';
+import { RedisLockService } from '../redis/redis-lock.service';
 
 @Injectable()
 export class ProductOptionService {
   constructor(
     @Inject(PRODUCT_OPTION_REPOSITORY)
     private readonly productOptionRepository: IProductOptionRepository,
+    private readonly redisLockService: RedisLockService,
   ) {}
 
   async checkMultipleStock(items: { productOptionId: number; quantity: number }[]): Promise<boolean> {
@@ -22,23 +24,56 @@ export class ProductOptionService {
     // ID 순으로 정렬하여 데드락 방지
     const sortedItems = [...items].sort((a, b) => a.productOptionId - b.productOptionId);
     
-    // 비관적 락으로 재고 차감 (Repository에서 검증 없이 바로 차감)
-    for (const item of sortedItems) {
-      // 사전 검증: 락 없이 빠른 실패를 위한 재고 체크
-      const productOption = await this.productOptionRepository.findById(item.productOptionId);
-      
-      if (!productOption) {
-        throw new BadRequestException(`상품 옵션 ID ${item.productOptionId}를 찾을 수 없습니다.`);
+    // 각 상품 옵션에 대해 Redis lock 적용
+    const locks: Array<{ key: string; value: string }> = [];
+    
+    try {
+      // 1. 모든 상품 옵션에 대해 Redis lock 획득
+      for (const item of sortedItems) {
+        const lockKey = `deduct:stock:${item.productOptionId}`;
+        const lockValue = this.redisLockService.generateLockValue('deductStock', undefined, {
+          productOptionId: item.productOptionId,
+          quantity: item.quantity
+        });
+        
+        const acquired = await this.redisLockService.tryAcquireLock(lockKey, lockValue, {
+          ttlSeconds: 10,
+          retryAttempts: 3,
+          retryDelayMs: 100,
+        });
+
+        if (!acquired) {
+          throw new ConflictException(
+            `상품 옵션 ${item.productOptionId}의 재고 차감이 진행 중입니다. 잠시 후 다시 시도해주세요.`
+          );
+        }
+
+        locks.push({ key: lockKey, value: lockValue });
       }
 
-      if (productOption.stock < item.quantity) {
-        throw new BadRequestException(
-          `상품 옵션 '${productOption.name}'의 재고가 부족합니다. (요청: ${item.quantity}, 재고: ${productOption.stock})`
-        );
-      }
+      // 2. 비관적 락으로 재고 차감 (Repository에서 검증 없이 바로 차감)
+      for (const item of sortedItems) {
+        // 사전 검증: 락 없이 빠른 실패를 위한 재고 체크
+        const productOption = await this.productOptionRepository.findById(item.productOptionId);
+        
+        if (!productOption) {
+          throw new BadRequestException(`상품 옵션 ID ${item.productOptionId}를 찾을 수 없습니다.`);
+        }
 
-      // 비관적 락으로 원자적 재고 차감
-      await this.productOptionRepository.deductStockWithPessimisticLock(item.productOptionId, item.quantity);
+        if (productOption.stock < item.quantity) {
+          throw new BadRequestException(
+            `상품 옵션 '${productOption.name}'의 재고가 부족합니다. (요청: ${item.quantity}, 재고: ${productOption.stock})`
+          );
+        }
+
+        // 비관적 락으로 원자적 재고 차감
+        await this.productOptionRepository.deductStockWithPessimisticLock(item.productOptionId, item.quantity);
+      }
+    } finally {
+      // 3. 모든 Redis lock 해제 (역순으로)
+      for (const lock of locks.reverse()) {
+        await this.redisLockService.releaseLock(lock.key, lock.value);
+      }
     }
   }
 
