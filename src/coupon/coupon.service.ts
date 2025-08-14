@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, BadRequestException, Inject, ConflictException } from '@nestjs/common';
 import { ICouponRepository, COUPON_REPOSITORY } from './domain/coupon.repository.interface';
 import { IUserCouponRepository, USER_COUPON_REPOSITORY } from './domain/user-coupon.repository.interface';
 import { GetCouponsRequest } from './dto/request/get-coupons-request';
@@ -10,6 +10,7 @@ import { CouponEntity } from './domain/coupon.entity';
 import { Retry } from '../common/decorator/retry.decorator';
 import { QueryFailedError } from 'typeorm';
 import { UserCouponEntity } from './domain/user-coupon.entity';
+import { RedisLockService } from '../redis/redis-lock.service';
 
 @Injectable()
 export class CouponService {
@@ -18,7 +19,32 @@ export class CouponService {
     private readonly couponRepository: ICouponRepository,
     @Inject(USER_COUPON_REPOSITORY)
     private readonly userCouponRepository: IUserCouponRepository,
+    private readonly redisLockService: RedisLockService,
   ) {}
+
+  async issueCoupon(couponId: number, userId: number): Promise<UserCouponDetailResponse> {
+    const lockKey = `issue:coupon:${userId}:${couponId}`;
+    const lockValue = this.redisLockService.generateLockValue('issueCoupon', userId);
+    const lockTTL = 5;
+
+    const acquired = await this.redisLockService.tryAcquireLock(lockKey, lockValue, {
+      ttlSeconds: lockTTL,
+      retryAttempts: 3,
+      retryDelayMs: 100,
+    });
+
+    if (!acquired) {
+      throw new ConflictException(
+        `쿠폰 발급이 진행 중입니다. 잠시 후 다시 시도해주세요. (사용자: ${userId}, 쿠폰: ${couponId})`,
+      );
+    }
+
+    try {
+      return await this.executeCouponIssueWithRetry(couponId, userId);
+    } finally {
+      await this.redisLockService.releaseLock(lockKey, lockValue);
+    }
+  }
 
   @Retry({
     maxAttempts: 3,
@@ -30,13 +56,10 @@ export class CouponService {
       );
     },
   })
-  async issueCoupon(couponId: number, userId: number): Promise<UserCouponDetailResponse> {
+  private async executeCouponIssueWithRetry(couponId: number, userId: number): Promise<UserCouponDetailResponse> {
     await this.validateDuplicateIssue(userId, couponId);
-
-    // 사전 검증: 락 없이 빠른 실패를 위한 발급 가능성 체크 (최종 보장은 Repository에서 락 후 재검증)
     await this.validateCouponForIssue(couponId);
 
-    // Repository 레벨에서 비관적 락을 이용해 재고 차감과 검증을 처리
     const updatedCoupon = await this.couponRepository.decrementStockWithPessimisticLock(couponId);
 
     const userCoupon = await this.userCouponRepository.saveUserCoupon({
@@ -114,7 +137,6 @@ export class CouponService {
 
     return coupon;
   }
-
 
   async validateAndGetCouponInfo(userId: number, couponCode: string): Promise<UserCouponEntity> {
     const userCoupon = await this.userCouponRepository.findAvailableUserCouponByCode(userId, couponCode);
