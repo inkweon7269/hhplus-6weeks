@@ -10,6 +10,7 @@ import { UserCouponRepository } from './domain/user-coupon.repository';
 import { COUPON_REPOSITORY } from './domain/coupon.repository.interface';
 import { USER_COUPON_REPOSITORY } from './domain/user-coupon.repository.interface';
 import { RedisModule } from '../redis/redis.module';
+import { RedisCacheService } from '../redis/redis-cache.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([CouponEntity, UserCouponEntity]), RedisModule],
@@ -25,6 +26,7 @@ import { RedisModule } from '../redis/redis.module';
     },
     CouponService,
     CouponFacade,
+    RedisCacheService,
   ],
   exports: [CouponFacade, CouponService],
 })

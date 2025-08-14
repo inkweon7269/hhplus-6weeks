@@ -171,7 +171,7 @@ describe('OrderFacade', () => {
         createdAt: new Date(),
         updatedAt: new Date(),
         user: {} as any,
-        coupon: { 
+        coupon: {
           id: 2,
           discountAmount: 5000,
           expiryDate: new Date('2025-12-31'),
@@ -190,10 +190,7 @@ describe('OrderFacade', () => {
       // Assert
       expect(productService.getProductsForPayment).toHaveBeenCalledWith([1, 2]);
       expect(productOptionService.checkMultipleStock).toHaveBeenCalledWith(mockOrderProductOptions);
-      expect(couponService.validateAndGetCouponInfo).toHaveBeenCalledWith(
-        userId,
-        mockCreateOrderRequest.couponCode,
-      );
+      expect(couponService.validateAndGetCouponInfo).toHaveBeenCalledWith(userId, mockCreateOrderRequest.couponCode);
       expect(balanceService.useBalance).toHaveBeenCalledWith(userId, mockCreateOrderRequest.usedAmount);
       expect(productOptionService.deductMultipleStock).toHaveBeenCalledWith(mockOrderProductOptions);
       expect(couponService.useCoupon).toHaveBeenCalledWith(userId, mockCreateOrderRequest.couponCode);
@@ -228,7 +225,7 @@ describe('OrderFacade', () => {
         createdAt: new Date(),
         updatedAt: new Date(),
         user: {} as any,
-        coupon: { 
+        coupon: {
           id: 2,
           discountAmount: 5000,
           expiryDate: new Date('2025-12-31'),
@@ -323,7 +320,7 @@ describe('OrderFacade', () => {
         createdAt: new Date(),
         updatedAt: new Date(),
         user: {} as any,
-        coupon: { 
+        coupon: {
           id: 2,
           discountAmount: 5000,
           expiryDate: new Date('2025-12-31'),
@@ -375,7 +372,7 @@ describe('OrderFacade', () => {
         createdAt: new Date(),
         updatedAt: new Date(),
         user: {} as any,
-        coupon: { 
+        coupon: {
           id: 2,
           discountAmount: 5000,
           expiryDate: new Date('2025-12-31'),
@@ -424,7 +421,7 @@ describe('OrderFacade', () => {
         createdAt: new Date(),
         updatedAt: new Date(),
         user: {} as any,
-        coupon: { 
+        coupon: {
           id: 2,
           discountAmount: 3000000, // 주문 금액보다 큰 할인
           expiryDate: new Date('2025-12-31'),

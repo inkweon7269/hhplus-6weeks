@@ -23,19 +23,19 @@ export class ProductOptionService {
 
     // ID 순으로 정렬하여 데드락 방지
     const sortedItems = [...items].sort((a, b) => a.productOptionId - b.productOptionId);
-    
+
     // 각 상품 옵션에 대해 Redis lock 적용
     const locks: Array<{ key: string; value: string }> = [];
-    
+
     try {
       // 1. 모든 상품 옵션에 대해 Redis lock 획득
       for (const item of sortedItems) {
         const lockKey = `deduct:stock:${item.productOptionId}`;
         const lockValue = this.redisLockService.generateLockValue('deductStock', undefined, {
           productOptionId: item.productOptionId,
-          quantity: item.quantity
+          quantity: item.quantity,
         });
-        
+
         const acquired = await this.redisLockService.tryAcquireLock(lockKey, lockValue, {
           ttlSeconds: 10,
           retryAttempts: 3,
@@ -44,7 +44,7 @@ export class ProductOptionService {
 
         if (!acquired) {
           throw new ConflictException(
-            `상품 옵션 ${item.productOptionId}의 재고 차감이 진행 중입니다. 잠시 후 다시 시도해주세요.`
+            `상품 옵션 ${item.productOptionId}의 재고 차감이 진행 중입니다. 잠시 후 다시 시도해주세요.`,
           );
         }
 
@@ -55,14 +55,14 @@ export class ProductOptionService {
       for (const item of sortedItems) {
         // 사전 검증: 락 없이 빠른 실패를 위한 재고 체크
         const productOption = await this.productOptionRepository.findById(item.productOptionId);
-        
+
         if (!productOption) {
           throw new BadRequestException(`상품 옵션 ID ${item.productOptionId}를 찾을 수 없습니다.`);
         }
 
         if (productOption.stock < item.quantity) {
           throw new BadRequestException(
-            `상품 옵션 '${productOption.name}'의 재고가 부족합니다. (요청: ${item.quantity}, 재고: ${productOption.stock})`
+            `상품 옵션 '${productOption.name}'의 재고가 부족합니다. (요청: ${item.quantity}, 재고: ${productOption.stock})`,
           );
         }
 

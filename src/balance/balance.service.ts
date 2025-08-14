@@ -4,6 +4,7 @@ import { BalanceRechargeRequest } from './dto/request/balance-recharge-request';
 import { Retry } from '../common/decorator/retry.decorator';
 import { OptimisticLockException } from '../common/exception/optimistic-lock.exception';
 import { RedisLockService } from '../redis/redis-lock.service';
+import { RedisCacheService } from '../redis/redis-cache.service';
 
 @Injectable()
 export class BalanceService {
@@ -11,14 +12,28 @@ export class BalanceService {
     @Inject(BALANCE_REPOSITORY)
     private readonly balanceRepository: IBalanceRepository,
     private readonly redisLockService: RedisLockService,
+    private readonly redisCacheService: RedisCacheService,
   ) {}
 
   async getBalance(userId: number) {
+    // 캐시 키 생성
+    const cacheKey = `user:${userId}:balance`;
+
+    // 캐시에서 먼저 조회
+    const cachedBalance = await this.redisCacheService.get<any>(cacheKey);
+    if (cachedBalance) {
+      return cachedBalance;
+    }
+
+    // 캐시에 없으면 DB에서 조회
     const userBalance = await this.balanceRepository.findByUserId(userId);
 
     if (!userBalance) {
       throw new NotFoundException(`ID가 '${userId}'인 사용자의 잔액 정보를 찾을 수 없습니다.`);
     }
+
+    // 조회된 결과를 캐시에 저장 (5분 TTL - 짧은 TTL 설정)
+    await this.redisCacheService.set(cacheKey, userBalance, 300);
 
     return userBalance;
   }
@@ -64,6 +79,9 @@ export class BalanceService {
 
       // 낙관적 락을 사용한 업데이트
       await this.balanceRepository.updateBalanceWithOptimisticLock(balanceEntity, newBalance);
+      
+      // 잔액 변경 후 캐시 무효화
+      await this.invalidateBalanceCache(userId);
     } catch (error) {
       if (error instanceof OptimisticLockException) {
         throw error; // 재시도 로직에서 처리
@@ -119,6 +137,9 @@ export class BalanceService {
 
       // 낙관적 락을 사용한 차감
       const updatedBalance = await this.balanceRepository.deductBalanceWithOptimisticLock(balanceEntity, usedAmount);
+      
+      // 잔액 변경 후 캐시 무효화
+      await this.invalidateBalanceCache(userId);
 
       return {
         userId,
@@ -158,4 +179,13 @@ export class BalanceService {
       throw new BadRequestException('사용 금액은 100원 단위로만 입력 가능합니다.');
     }
   }
+
+  /**
+   * 사용자 잔액 캐시 무효화
+   */
+  private async invalidateBalanceCache(userId: number): Promise<void> {
+    const cacheKey = `user:${userId}:balance`;
+    await this.redisCacheService.del(cacheKey);
+  }
+
 }

@@ -5,11 +5,11 @@ export interface IProductOptionRepository {
   saveProductOption(productOption: Partial<ProductOptionEntity>): Promise<ProductOptionEntity>;
   findByIds(ids: number[]): Promise<ProductOptionEntity[]>;
   findById(id: number): Promise<ProductOptionEntity | null>;
-  
+
   // 비관적 락을 사용한 재고 차감 메서드들
   deductStockWithPessimisticLock(productOptionId: number, quantity: number): Promise<ProductOptionEntity>;
   deductMultipleStockWithPessimisticLock(
-    items: { productOptionId: number; quantity: number }[]
+    items: { productOptionId: number; quantity: number }[],
   ): Promise<ProductOptionEntity[]>;
 }
 

@@ -50,16 +50,13 @@ export class ProductOptionRepository implements IProductOptionRepository {
   }
 
   async deductMultipleStockWithPessimisticLock(
-    items: { productOptionId: number; quantity: number }[]
+    items: { productOptionId: number; quantity: number }[],
   ): Promise<ProductOptionEntity[]> {
     const updatedOptions: ProductOptionEntity[] = [];
 
     // 순차적으로 락 획득 및 재고 차감 (데드락 방지)
     for (const item of items) {
-      const updatedOption = await this.deductStockWithPessimisticLock(
-        item.productOptionId,
-        item.quantity
-      );
+      const updatedOption = await this.deductStockWithPessimisticLock(item.productOptionId, item.quantity);
       updatedOptions.push(updatedOption);
     }
 

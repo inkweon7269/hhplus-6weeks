@@ -209,7 +209,5 @@ describe('Balance Integration Test (IT)', () => {
       const expectedFinalAmount = initialAmount + firstRecharge.amount + secondRecharge.amount;
       expect(balanceFromDb!.amount).toBe(expectedFinalAmount);
     });
-
-
   });
 });

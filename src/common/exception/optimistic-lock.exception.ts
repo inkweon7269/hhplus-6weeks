@@ -17,7 +17,7 @@ export class ConcurrencyException extends ConflictException {
 export class RetryExhaustedException extends ConflictException {
   constructor(
     maxAttempts: number,
-    message: string = `최대 재시도 횟수(${maxAttempts})를 초과했습니다. 잠시 후 다시 시도해주세요.`
+    message: string = `최대 재시도 횟수(${maxAttempts})를 초과했습니다. 잠시 후 다시 시도해주세요.`,
   ) {
     super(message);
     this.name = 'RetryExhaustedException';
