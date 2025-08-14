@@ -8,6 +8,7 @@ import {
   IProductSalesDailyRepository,
   PRODUCT_SALES_DAILY_REPOSITORY,
 } from './domain/product-sales-daily.repository.interface';
+import { RedisCacheService } from '../redis/redis-cache.service';
 
 @Injectable()
 export class ProductService {
@@ -16,6 +17,7 @@ export class ProductService {
     private readonly productRepository: IProductRepository,
     @Inject(PRODUCT_SALES_DAILY_REPOSITORY)
     private readonly productSalesDailyRepository: IProductSalesDailyRepository,
+    private readonly redisCacheService: RedisCacheService,
   ) {}
 
   async getProducts(query: GetProductsRequest): Promise<GetProductsResponse> {
@@ -36,13 +38,28 @@ export class ProductService {
   }
 
   async getProduct(id: number): Promise<GetProductResponse> {
+    // 캐시 키 생성
+    const cacheKey = `product:detail:${id}`;
+
+    // 캐시에서 먼저 조회
+    const cachedProduct = await this.redisCacheService.get<GetProductResponse>(cacheKey);
+    if (cachedProduct) {
+      return cachedProduct;
+    }
+
+    // 캐시에 없으면 DB에서 조회
     const product = await this.productRepository.findByIdWithOptions(id);
 
     if (!product) {
       throw new NotFoundException(`ID가 '${id}'인 상품을 찾을 수 없습니다.`);
     }
 
-    return GetProductResponse.of(product);
+    const response = GetProductResponse.of(product);
+
+    // 조회된 결과를 캐시에 저장 (10분 TTL)
+    await this.redisCacheService.set(cacheKey, response, 600);
+
+    return response;
   }
 
   /**
@@ -221,5 +238,20 @@ export class ProductService {
     }));
 
     return topSellingProducts;
+  }
+
+  /**
+   * 상품 캐시 무효화 (상품 정보 변경 시 사용)
+   */
+  async invalidateProductCache(productId: number): Promise<void> {
+    const cacheKey = `product:detail:${productId}`;
+    await this.redisCacheService.del(cacheKey);
+  }
+
+  /**
+   * 모든 상품 캐시 무효화 (대량 업데이트 시 사용)
+   */
+  async invalidateAllProductCache(): Promise<void> {
+    await this.redisCacheService.delPattern('product:detail:*');
   }
 }
