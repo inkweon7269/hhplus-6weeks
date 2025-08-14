@@ -2,10 +2,12 @@ import { Module, Global } from '@nestjs/common';
 import { RedisModule as IoRedisModule } from '@nestjs-modules/ioredis';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { RedisLockService } from './redis-lock.service';
+import { RedisCacheService } from './redis-cache.service';
 
 @Global()
 @Module({
   imports: [
+    // 기본 Redis 연결 (Lock 등에 사용 - DB 0)
     IoRedisModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -30,7 +32,7 @@ import { RedisLockService } from './redis-lock.service';
       }),
     }),
   ],
-  providers: [RedisLockService],
-  exports: [RedisLockService],
+  providers: [RedisLockService, RedisCacheService],
+  exports: [RedisLockService, RedisCacheService],
 })
 export class RedisModule {}
