@@ -195,7 +195,6 @@ describe('CouponService', () => {
     });
   });
 
-
   describe('useCoupon', () => {
     const userId = 1;
     const couponCode = 'DISCOUNT10';
@@ -221,5 +220,4 @@ describe('CouponService', () => {
       expect(userCouponRepository.markUserCouponAsUsed).toHaveBeenCalledWith(mockUserCouponEntity.id, expect.any(Date));
     });
   });
-
 });
